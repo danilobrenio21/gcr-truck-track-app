@@ -132,7 +132,6 @@ export default function App() {
     debounceTimer.current = setTimeout(async () => {
       try {
         const encoded = encodeURIComponent(text.trim());
-        // Restricted to Philippines (countrycodes=ph) with address details
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encoded}&countrycodes=ph&addressdetails=1&limit=6`;
         const res = await fetch(url, {
           headers: {
@@ -166,7 +165,7 @@ export default function App() {
     calculateRoute(target);
   };
 
-  // Turn-by-Turn Route + Traffic Calculation
+  // Turn-by-Turn Route + Traffic Flow Calculation
   const calculateRoute = (targetDest) => {
     if (!currentLocation || !targetDest) return;
 
@@ -276,7 +275,7 @@ export default function App() {
   // 2. ACTIVE DRIVER NAVIGATION INTERFACE
   return (
     <SafeAreaView style={styles.container}>
-      {/* Terminal Bar */}
+      {/* Terminal Header Bar */}
       <View style={styles.terminalHeader}>
         <View>
           <Text style={styles.driverNameDisplay}>{driverName}</Text>
@@ -296,7 +295,7 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Broadcast Bar */}
+      {/* Live Broadcast Bar */}
       <View style={styles.broadcastRow}>
         <View style={styles.broadcastLeft}>
           <View
@@ -317,7 +316,7 @@ export default function App() {
         />
       </View>
 
-      {/* Dynamic Search Box & Autocomplete List */}
+      {/* Dynamic Search Box & Autocomplete Suggestions List */}
       <View style={styles.searchSection}>
         <View style={styles.searchBox}>
           <Ionicons name="search" size={20} color="#64748b" style={styles.searchIcon} />
@@ -360,7 +359,7 @@ export default function App() {
         )}
       </View>
 
-      {/* Map Display */}
+      {/* Interactive Map */}
       <View style={styles.mapWrap}>
         {currentLocation && (
           <MapView
