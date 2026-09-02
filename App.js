@@ -18,22 +18,38 @@ import {
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getDatabase, ref, set, onValue, remove } from 'firebase/database';
+
+// --- YOUR FIREBASE CONFIGURATION ---
+const firebaseConfig = {
+  apiKey: "AIzaSyBghMeHGvBuocIstk_t8F0QXlmD1T9K1dw",
+  authDomain: "grc-trucktrack.firebaseapp.com",
+  databaseURL: "https://grc-trucktrack-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "grc-trucktrack",
+  storageBucket: "grc-trucktrack.firebasestorage.app",
+  messagingSenderId: "221623254596",
+  appId: "1:221623254596:web:6bd0fc5e6ab69aafe10611"
+};
+
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const db = getDatabase(app);
 
 export default function App() {
-  // Authentication State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [driverName, setDriverName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [plateNumber, setPlateNumber] = useState('');
 
-  // Navigation & GPS State
+  // GPS & Fleet States
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [currentLocation, setCurrentLocation] = useState(null);
+  const [fleetTrucks, setFleetTrucks] = useState({});
   const [destination, setDestination] = useState(null);
   const [routeCoordinates, setRouteCoordinates] = useState([]);
   const [isNavigating, setIsNavigating] = useState(false);
 
-  // Search & Autocomplete State
+  // Search & Metric States
   const [searchQuery, setSearchQuery] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -45,6 +61,18 @@ export default function App() {
   const locationSubscription = useRef(null);
   const debounceTimer = useRef(null);
 
+  // 1. Listen for all online trucks in real time
+  useEffect(() => {
+    const trucksRef = ref(db, 'trucks/');
+    const unsubscribe = onValue(trucksRef, (snapshot) => {
+      const data = snapshot.val() || {};
+      setFleetTrucks(data);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Request GPS Permission
   useEffect(() => {
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -52,9 +80,7 @@ export default function App() {
         Alert.alert('Permission Denied', 'GPS permission required to broadcast live tracking.');
         return;
       }
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       setCurrentLocation({
         latitude: loc.coords.latitude,
         longitude: loc.coords.longitude,
@@ -62,22 +88,23 @@ export default function App() {
     })();
 
     return () => {
-      if (locationSubscription.current) {
-        locationSubscription.current.remove();
-      }
-      if (debounceTimer.current) {
-        clearTimeout(debounceTimer.current);
-      }
+      if (locationSubscription.current) locationSubscription.current.remove();
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
     };
   }, []);
 
+  // 3. Handle GPS Broadcast to Firebase
   useEffect(() => {
-    if (isBroadcasting || isNavigating) {
+    if (isBroadcasting && plateNumber) {
       startTracking();
-    } else if (locationSubscription.current) {
-      locationSubscription.current.remove();
+    } else {
+      if (locationSubscription.current) locationSubscription.current.remove();
+      if (plateNumber) {
+        const cleanPlate = plateNumber.replace(/[^a-zA-Z0-9]/g, '_');
+        remove(ref(db, `trucks/${cleanPlate}`));
+      }
     }
-  }, [isBroadcasting, isNavigating]);
+  }, [isBroadcasting]);
 
   const startTracking = async () => {
     if (locationSubscription.current) locationSubscription.current.remove();
@@ -85,7 +112,7 @@ export default function App() {
     locationSubscription.current = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.High,
-        timeInterval: 2000,
+        timeInterval: 2500,
         distanceInterval: 5,
       },
       (newLoc) => {
@@ -94,6 +121,18 @@ export default function App() {
           longitude: newLoc.coords.longitude,
         };
         setCurrentLocation(coords);
+
+        if (plateNumber) {
+          const cleanPlate = plateNumber.replace(/[^a-zA-Z0-9]/g, '_');
+          set(ref(db, `trucks/${cleanPlate}`), {
+            driverName: driverName.trim(),
+            plateNumber: plateNumber.trim().toUpperCase(),
+            phoneNumber: phoneNumber.trim(),
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            updatedAt: Date.now(),
+          });
+        }
 
         if (isNavigating && mapRef.current) {
           mapRef.current.animateCamera({
@@ -116,10 +155,8 @@ export default function App() {
     setIsBroadcasting(true);
   };
 
-  // Live Suggestion Search locked to Philippines locations & landmarks
   const handleSearchTextChange = (text) => {
     setSearchQuery(text);
-
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
 
     if (text.trim().length < 3) {
@@ -134,21 +171,18 @@ export default function App() {
         const encoded = encodeURIComponent(text.trim());
         const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encoded}&countrycodes=ph&addressdetails=1&limit=6`;
         const res = await fetch(url, {
-          headers: {
-            'User-Agent': 'GCR-TruckTrack-App/1.0 (dispatch@gcrtrucktrack.ph)',
-          },
+          headers: { 'User-Agent': 'GCR-TruckTrack-App/1.0 (dispatch@gcrtrucktrack.ph)' },
         });
         const data = await res.json();
         setSuggestions(data || []);
       } catch (err) {
-        console.warn('Search autocomplete failed:', err);
+        console.warn('Search autocomplete error:', err);
       } finally {
         setIsSearching(false);
       }
     }, 400);
   };
 
-  // Select place from suggestions
   const selectSuggestion = (item) => {
     Keyboard.dismiss();
     setSuggestions([]);
@@ -165,7 +199,6 @@ export default function App() {
     calculateRoute(target);
   };
 
-  // Turn-by-Turn Route + Traffic Flow Calculation
   const calculateRoute = (targetDest) => {
     if (!currentLocation || !targetDest) return;
 
@@ -183,9 +216,8 @@ export default function App() {
           setRouteCoordinates(coords);
 
           const durationMins = Math.round(route.duration / 60);
-          const distanceVal = (route.distance / 1000).toFixed(1);
           setEtaMinutes(durationMins);
-          setDistanceKm(distanceVal);
+          setDistanceKm((route.distance / 1000).toFixed(1));
 
           const avgSpeedKmh = (route.distance / 1000) / (route.duration / 3600);
           if (avgSpeedKmh < 18) {
@@ -207,23 +239,10 @@ export default function App() {
       });
   };
 
-  const startNavigation = () => {
-    if (!destination || routeCoordinates.length === 0) {
-      Alert.alert('Target Missing', 'Please select a destination from suggestions first.');
-      return;
-    }
-    setIsNavigating(true);
-    setIsBroadcasting(true);
-  };
-
-  // 1. DRIVER LOGIN SCREEN
   if (!isAuthenticated) {
     return (
       <SafeAreaView style={styles.authContainer}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.authKeyboardWrap}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.authKeyboardWrap}>
           <ScrollView contentContainerStyle={styles.authScroll}>
             <View style={styles.authHeader}>
               <View style={styles.logoBadge}>
@@ -272,10 +291,11 @@ export default function App() {
     );
   }
 
-  // 2. ACTIVE DRIVER NAVIGATION INTERFACE
+  const cleanMyPlate = plateNumber.replace(/[^a-zA-Z0-9]/g, '_');
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* Terminal Header Bar */}
+      {/* Header Bar */}
       <View style={styles.terminalHeader}>
         <View>
           <Text style={styles.driverNameDisplay}>{driverName}</Text>
@@ -288,6 +308,7 @@ export default function App() {
           onPress={() => {
             setIsNavigating(false);
             setIsBroadcasting(false);
+            remove(ref(db, `trucks/${cleanMyPlate}`));
             setIsAuthenticated(false);
           }}
         >
@@ -295,15 +316,10 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Live Broadcast Bar */}
+      {/* Broadcast Bar */}
       <View style={styles.broadcastRow}>
         <View style={styles.broadcastLeft}>
-          <View
-            style={[
-              styles.pulseDot,
-              { backgroundColor: isBroadcasting ? '#22c55e' : '#94a3b8' },
-            ]}
-          />
+          <View style={[styles.pulseDot, { backgroundColor: isBroadcasting ? '#22c55e' : '#94a3b8' }]} />
           <Text style={styles.broadcastText}>
             {isBroadcasting ? 'LIVE GPS BROADCAST ACTIVE' : 'TRACKING OFFLINE'}
           </Text>
@@ -316,13 +332,13 @@ export default function App() {
         />
       </View>
 
-      {/* Dynamic Search Box & Autocomplete Suggestions List */}
+      {/* Search Bar */}
       <View style={styles.searchSection}>
         <View style={styles.searchBox}>
           <Ionicons name="search" size={20} color="#64748b" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search city, SM Mall, warehouse, street in PH..."
+            placeholder="Search city, SM Mall, street in PH..."
             placeholderTextColor="#94a3b8"
             value={searchQuery}
             onChangeText={handleSearchTextChange}
@@ -331,7 +347,6 @@ export default function App() {
           {isSearching && <ActivityIndicator size="small" color="#0284c7" />}
         </View>
 
-        {/* Live Auto-Suggestions Dropdown */}
         {suggestions.length > 0 && (
           <View style={styles.suggestionsContainer}>
             <FlatList
@@ -339,10 +354,7 @@ export default function App() {
               keyExtractor={(item, index) => `${item.place_id || index}`}
               keyboardShouldPersistTaps="handled"
               renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.suggestionItem}
-                  onPress={() => selectSuggestion(item)}
-                >
+                <TouchableOpacity style={styles.suggestionItem} onPress={() => selectSuggestion(item)}>
                   <Ionicons name="location-outline" size={18} color="#0284c7" style={{ marginTop: 2 }} />
                   <View style={styles.suggestionTextWrapper}>
                     <Text style={styles.suggestionPrimary} numberOfLines={1}>
@@ -368,8 +380,8 @@ export default function App() {
             initialRegion={{
               latitude: currentLocation.latitude,
               longitude: currentLocation.longitude,
-              latitudeDelta: 0.04,
-              longitudeDelta: 0.04,
+              latitudeDelta: 0.05,
+              longitudeDelta: 0.05,
             }}
           >
             {routeCoordinates.length > 0 && (
@@ -380,11 +392,32 @@ export default function App() {
               />
             )}
 
-            <Marker coordinate={currentLocation} title={`${driverName} (${plateNumber})`}>
+            {/* Current Phone Truck (Blue Pin) */}
+            <Marker coordinate={currentLocation} title={`(You) ${driverName} - ${plateNumber}`}>
               <View style={styles.driverPin}>
                 <Ionicons name="bus" size={18} color="#ffffff" />
               </View>
             </Marker>
+
+            {/* Other Active Fleet Trucks from Firebase (Green Pins) */}
+            {Object.keys(fleetTrucks).map((key) => {
+              if (key === cleanMyPlate) return null;
+              const truck = fleetTrucks[key];
+              if (!truck || !truck.latitude || !truck.longitude) return null;
+
+              return (
+                <Marker
+                  key={key}
+                  coordinate={{ latitude: truck.latitude, longitude: truck.longitude }}
+                  title={`${truck.driverName} (${truck.plateNumber})`}
+                  description={`Contact: ${truck.phoneNumber}`}
+                >
+                  <View style={styles.fleetPin}>
+                    <Ionicons name="bus" size={18} color="#ffffff" />
+                  </View>
+                </Marker>
+              );
+            })}
 
             {destination && (
               <Marker coordinate={destination} title={destination.name}>
@@ -397,7 +430,7 @@ export default function App() {
         )}
       </View>
 
-      {/* Bottom Dispatch Panel */}
+      {/* Bottom Route Dashboard */}
       <View style={styles.actionSheet}>
         {destination ? (
           <View style={styles.metricsBox}>
@@ -424,7 +457,13 @@ export default function App() {
             )}
 
             {!isNavigating ? (
-              <TouchableOpacity style={styles.startNavBtn} onPress={startNavigation}>
+              <TouchableOpacity
+                style={styles.startNavBtn}
+                onPress={() => {
+                  setIsNavigating(true);
+                  setIsBroadcasting(true);
+                }}
+              >
                 <Ionicons name="navigate" size={18} color="#ffffff" />
                 <Text style={styles.btnText}>Start Turn-by-Turn Navigation</Text>
               </TouchableOpacity>
@@ -447,7 +486,7 @@ export default function App() {
         ) : (
           <View style={styles.noRouteState}>
             <Ionicons name="search-outline" size={22} color="#64748b" />
-            <Text style={styles.noRouteText}>Type any Philippine address or landmark above to see suggestions.</Text>
+            <Text style={styles.noRouteText}>Search a Philippine location to start routing.</Text>
           </View>
         )}
       </View>
@@ -528,13 +567,7 @@ const styles = StyleSheet.create({
   pulseDot: { width: 8, height: 8, borderRadius: 4 },
   broadcastText: { fontSize: 11, fontWeight: '700', color: '#cbd5e1' },
 
-  searchSection: {
-    position: 'absolute',
-    top: 115,
-    left: 14,
-    right: 14,
-    zIndex: 99,
-  },
+  searchSection: { position: 'absolute', top: 115, left: 14, right: 14, zIndex: 99 },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -575,7 +608,14 @@ const styles = StyleSheet.create({
 
   mapWrap: { flex: 1 },
   driverPin: {
-    backgroundColor: '#0284c7',
+    backgroundColor: '#0284c7', // Blue pin for your current truck
+    padding: 6,
+    borderRadius: 18,
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  fleetPin: {
+    backgroundColor: '#16a34a', // Green pin for other fleet trucks
     padding: 6,
     borderRadius: 18,
     borderWidth: 2,
