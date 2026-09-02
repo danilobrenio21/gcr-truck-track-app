@@ -7,7 +7,7 @@
     "userInterfaceStyle": "light",
     "owner": "danilobrenio21",
     "runtimeVersion": {
-      "policy": "appVersion"
+      "policy": "sdkVersion"
     },
     "updates": {
       "url": "https://u.expo.dev/2b60ab63-fa21-4e2c-a321-9122475b0d61"
