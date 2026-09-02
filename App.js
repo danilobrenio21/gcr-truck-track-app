@@ -12,6 +12,8 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  FlatList,
+  Keyboard,
 } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -31,8 +33,9 @@ export default function App() {
   const [routeCoordinates, setRouteCoordinates] = useState([]);
   const [isNavigating, setIsNavigating] = useState(false);
 
-  // Search & Telemetry State
+  // Search & Autocomplete State
   const [searchQuery, setSearchQuery] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [etaMinutes, setEtaMinutes] = useState(null);
   const [distanceKm, setDistanceKm] = useState(null);
@@ -40,6 +43,7 @@ export default function App() {
 
   const mapRef = useRef(null);
   const locationSubscription = useRef(null);
+  const debounceTimer = useRef(null);
 
   useEffect(() => {
     (async () => {
@@ -60,6 +64,9 @@ export default function App() {
     return () => {
       if (locationSubscription.current) {
         locationSubscription.current.remove();
+      }
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
       }
     };
   }, []);
@@ -109,45 +116,57 @@ export default function App() {
     setIsBroadcasting(true);
   };
 
-  // Search Address via OpenStreetMap Nominatim
-  const searchAddress = async () => {
-    if (!searchQuery.trim()) {
-      Alert.alert('Search Empty', 'Please enter a landmark or street address.');
+  // Live Suggestion Search locked to Philippines locations & landmarks
+  const handleSearchTextChange = (text) => {
+    setSearchQuery(text);
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+
+    if (text.trim().length < 3) {
+      setSuggestions([]);
+      setIsSearching(false);
       return;
     }
 
     setIsSearching(true);
-    try {
-      const encodedQuery = encodeURIComponent(searchQuery.trim());
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodedQuery}&limit=1`,
-        {
+    debounceTimer.current = setTimeout(async () => {
+      try {
+        const encoded = encodeURIComponent(text.trim());
+        // Restricted to Philippines (countrycodes=ph) with address details
+        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encoded}&countrycodes=ph&addressdetails=1&limit=6`;
+        const res = await fetch(url, {
           headers: {
-            'User-Agent': 'GCR-TruckTrack-App/1.0 (contact@gcrtrucktrack.com)',
+            'User-Agent': 'GCR-TruckTrack-App/1.0 (dispatch@gcrtrucktrack.ph)',
           },
-        }
-      );
-      const data = await response.json();
-
-      if (data && data.length > 0) {
-        const target = {
-          name: data[0].display_name.split(',')[0],
-          latitude: parseFloat(data[0].lat),
-          longitude: parseFloat(data[0].lon),
-        };
-        setDestination(target);
-        calculateRoute(target);
-      } else {
-        Alert.alert('Location Not Found', 'Could not locate that address. Try entering a clearer street name or landmark.');
+        });
+        const data = await res.json();
+        setSuggestions(data || []);
+      } catch (err) {
+        console.warn('Search autocomplete failed:', err);
+      } finally {
+        setIsSearching(false);
       }
-    } catch (err) {
-      Alert.alert('Search Error', 'Network failure while searching. Please try again.');
-    } finally {
-      setIsSearching(false);
-    }
+    }, 400);
   };
 
-  // Calculate Turn-by-Turn Route + Traffic Density + ETA
+  // Select place from suggestions
+  const selectSuggestion = (item) => {
+    Keyboard.dismiss();
+    setSuggestions([]);
+    const title = item.name || item.display_name.split(',')[0];
+    setSearchQuery(title);
+
+    const target = {
+      name: title,
+      latitude: parseFloat(item.lat),
+      longitude: parseFloat(item.lon),
+    };
+
+    setDestination(target);
+    calculateRoute(target);
+  };
+
+  // Turn-by-Turn Route + Traffic Calculation
   const calculateRoute = (targetDest) => {
     if (!currentLocation || !targetDest) return;
 
@@ -164,13 +183,11 @@ export default function App() {
           }));
           setRouteCoordinates(coords);
 
-          // Calculate ETA & Distance
           const durationMins = Math.round(route.duration / 60);
-          const distanceInKm = (route.distance / 1000).toFixed(1);
+          const distanceVal = (route.distance / 1000).toFixed(1);
           setEtaMinutes(durationMins);
-          setDistanceKm(distanceInKm);
+          setDistanceKm(distanceVal);
 
-          // Assess Live Traffic Flow (Average Speed in km/h)
           const avgSpeedKmh = (route.distance / 1000) / (route.duration / 3600);
           if (avgSpeedKmh < 18) {
             setTrafficCondition({ label: 'Heavy Traffic Flow', color: '#ef4444', polyColor: '#dc2626' });
@@ -181,7 +198,7 @@ export default function App() {
           }
 
           mapRef.current?.fitToCoordinates(coords, {
-            edgePadding: { top: 140, right: 60, bottom: 280, left: 60 },
+            edgePadding: { top: 180, right: 60, bottom: 280, left: 60 },
             animated: true,
           });
         }
@@ -193,14 +210,14 @@ export default function App() {
 
   const startNavigation = () => {
     if (!destination || routeCoordinates.length === 0) {
-      Alert.alert('Target Missing', 'Please search and select a destination first.');
+      Alert.alert('Target Missing', 'Please select a destination from suggestions first.');
       return;
     }
     setIsNavigating(true);
     setIsBroadcasting(true);
   };
 
-  // 1. DRIVER AUTHENTICATION PORTAL
+  // 1. DRIVER LOGIN SCREEN
   if (!isAuthenticated) {
     return (
       <SafeAreaView style={styles.authContainer}>
@@ -256,10 +273,10 @@ export default function App() {
     );
   }
 
-  // 2. ACTIVE DRIVER TERMINAL & NAVIGATION
+  // 2. ACTIVE DRIVER NAVIGATION INTERFACE
   return (
     <SafeAreaView style={styles.container}>
-      {/* Driver Info Header */}
+      {/* Terminal Bar */}
       <View style={styles.terminalHeader}>
         <View>
           <Text style={styles.driverNameDisplay}>{driverName}</Text>
@@ -279,7 +296,7 @@ export default function App() {
         </TouchableOpacity>
       </View>
 
-      {/* Broadcast Status Bar */}
+      {/* Broadcast Bar */}
       <View style={styles.broadcastRow}>
         <View style={styles.broadcastLeft}>
           <View
@@ -300,30 +317,50 @@ export default function App() {
         />
       </View>
 
-      {/* Search Bar Overlay */}
-      <View style={styles.searchBarWrapper}>
+      {/* Dynamic Search Box & Autocomplete List */}
+      <View style={styles.searchSection}>
         <View style={styles.searchBox}>
           <Ionicons name="search" size={20} color="#64748b" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search street, market, warehouse..."
+            placeholder="Search city, SM Mall, warehouse, street in PH..."
             placeholderTextColor="#94a3b8"
             value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-            onSubmitEditing={searchAddress}
+            onChangeText={handleSearchTextChange}
+            clearButtonMode="while-editing"
           />
-          {isSearching ? (
-            <ActivityIndicator size="small" color="#0284c7" />
-          ) : (
-            <TouchableOpacity onPress={searchAddress} style={styles.searchActionBtn}>
-              <Text style={styles.searchActionBtnText}>Find</Text>
-            </TouchableOpacity>
-          )}
+          {isSearching && <ActivityIndicator size="small" color="#0284c7" />}
         </View>
+
+        {/* Live Auto-Suggestions Dropdown */}
+        {suggestions.length > 0 && (
+          <View style={styles.suggestionsContainer}>
+            <FlatList
+              data={suggestions}
+              keyExtractor={(item, index) => `${item.place_id || index}`}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.suggestionItem}
+                  onPress={() => selectSuggestion(item)}
+                >
+                  <Ionicons name="location-outline" size={18} color="#0284c7" style={{ marginTop: 2 }} />
+                  <View style={styles.suggestionTextWrapper}>
+                    <Text style={styles.suggestionPrimary} numberOfLines={1}>
+                      {item.name || item.display_name.split(',')[0]}
+                    </Text>
+                    <Text style={styles.suggestionSecondary} numberOfLines={1}>
+                      {item.display_name}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        )}
       </View>
 
-      {/* Interactive Map */}
+      {/* Map Display */}
       <View style={styles.mapWrap}>
         {currentLocation && (
           <MapView
@@ -361,13 +398,13 @@ export default function App() {
         )}
       </View>
 
-      {/* Route & Traffic Control Panel */}
+      {/* Bottom Dispatch Panel */}
       <View style={styles.actionSheet}>
         {destination ? (
           <View style={styles.metricsBox}>
             <View style={styles.metricsRow}>
-              <View>
-                <Text style={styles.destLabel}>TARGET DESTINATION</Text>
+              <View style={{ flex: 1, paddingRight: 10 }}>
+                <Text style={styles.destLabel}>DESTINATION</Text>
                 <Text style={styles.destHeading} numberOfLines={1}>{destination.name}</Text>
               </View>
               {etaMinutes !== null && (
@@ -378,12 +415,11 @@ export default function App() {
               )}
             </View>
 
-            {/* Live Traffic Indicator */}
             {trafficCondition && (
               <View style={styles.trafficBanner}>
                 <Ionicons name="speedometer" size={16} color={trafficCondition.color} />
                 <Text style={[styles.trafficText, { color: trafficCondition.color }]}>
-                  {trafficCondition.label} • {distanceKm} km away
+                  {trafficCondition.label} • {distanceKm} km
                 </Text>
               </View>
             )}
@@ -401,6 +437,7 @@ export default function App() {
                   setRouteCoordinates([]);
                   setDestination(null);
                   setTrafficCondition(null);
+                  setSearchQuery('');
                 }}
               >
                 <Ionicons name="stop-circle" size={18} color="#ffffff" />
@@ -410,8 +447,8 @@ export default function App() {
           </View>
         ) : (
           <View style={styles.noRouteState}>
-            <Ionicons name="map-outline" size={24} color="#64748b" />
-            <Text style={styles.noRouteText}>Search a destination address above to calculate ETA & traffic.</Text>
+            <Ionicons name="search-outline" size={22} color="#64748b" />
+            <Text style={styles.noRouteText}>Type any Philippine address or landmark above to see suggestions.</Text>
           </View>
         )}
       </View>
@@ -492,28 +529,50 @@ const styles = StyleSheet.create({
   pulseDot: { width: 8, height: 8, borderRadius: 4 },
   broadcastText: { fontSize: 11, fontWeight: '700', color: '#cbd5e1' },
 
-  searchBarWrapper: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#1e293b',
+  searchSection: {
+    position: 'absolute',
+    top: 115,
+    left: 14,
+    right: 14,
+    zIndex: 99,
   },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ffffff',
     borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 46,
+    paddingHorizontal: 14,
+    height: 48,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
   },
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 14, color: '#0f172a' },
-  searchActionBtn: {
-    backgroundColor: '#0284c7',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+  suggestionsContainer: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    marginTop: 6,
+    maxHeight: 220,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+    overflow: 'hidden',
   },
-  searchActionBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 12 },
+  suggestionItem: {
+    flexDirection: 'row',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  suggestionTextWrapper: { flex: 1 },
+  suggestionPrimary: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
+  suggestionSecondary: { fontSize: 11, color: '#64748b', marginTop: 1 },
 
   mapWrap: { flex: 1 },
   driverPin: {
@@ -542,7 +601,7 @@ const styles = StyleSheet.create({
   metricsBox: { gap: 10 },
   metricsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   destLabel: { fontSize: 10, fontWeight: '700', color: '#64748b' },
-  destHeading: { fontSize: 15, fontWeight: '700', color: '#0f172a', maxWidth: 240 },
+  destHeading: { fontSize: 15, fontWeight: '700', color: '#0f172a' },
   etaContainer: {
     backgroundColor: '#e0f2fe',
     paddingHorizontal: 12,
