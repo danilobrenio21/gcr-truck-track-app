@@ -8,8 +8,6 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    env:
-      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
     steps:
       - name: Checkout repository
@@ -23,8 +21,5 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Install EAS CLI
-        run: npm install -g eas-cli
-
-      - name: Publish Update to Expo
-        run: eas update --auto --non-interactive
+      - name: Build and Export App Bundle
+        run: npx expo export --platform all
