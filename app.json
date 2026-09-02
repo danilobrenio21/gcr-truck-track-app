@@ -2,6 +2,7 @@
   "expo": {
     "name": "gcr-truck-tracker",
     "slug": "gcr-truck-tracker",
+    "owner": "danilobrenio21",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
