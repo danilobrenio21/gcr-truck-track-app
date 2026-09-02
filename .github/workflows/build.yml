@@ -21,5 +21,10 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build and Export App Bundle
-        run: npx expo export --platform all
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Publish to Expo Go Branch
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: eas update --branch main --message "Deploying preview" --non-interactive
