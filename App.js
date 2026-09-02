@@ -5,49 +5,112 @@ import {
   Text,
   TouchableOpacity,
   SafeAreaView,
-  Linking,
+  TextInput,
+  Switch,
+  Alert,
 } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
+import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 
-const DISPATCHES = [
-  {
-    id: 'GCR-1082',
-    driver: 'Danilo B.',
-    vehicle: 'Fuso Canter 4W',
-    destinationName: 'Grace Park, Caloocan City',
-    contact: '8634-7097',
-    eta: '14 MINS',
-    // Moved to actual road: NLEX Balintawak
-    origin: { latitude: 14.6565, longitude: 120.9950 },
-    destination: { latitude: 14.6438, longitude: 120.9858 },
-  },
-  {
-    id: 'GCR-1090',
-    driver: 'Ricardo M.',
-    vehicle: 'Isuzu Elf Chiller',
-    destinationName: 'Divisoria Market, Manila',
-    contact: '8634-7098',
-    eta: '38 MINS',
-    // Moved to actual road: Manila North Harbor
-    origin: { latitude: 14.6065, longitude: 120.9630 },
-    destination: { latitude: 14.6025, longitude: 120.9715 },
-  },
+// Preset GCR Logistics Hubs around Metro Manila
+const PRESET_DESTINATIONS = [
+  { name: 'Grace Park, Caloocan Hub', latitude: 14.6438, longitude: 120.9858 },
+  { name: 'Divisoria Logistics Depot', latitude: 14.6025, longitude: 120.9715 },
+  { name: 'Balintawak Cold Storage', latitude: 14.6565, longitude: 120.9950 },
 ];
 
 export default function App() {
-  const [selectedTruck, setSelectedTruck] = useState(null);
+  const [driverMode, setDriverMode] = useState(true);
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [destination, setDestination] = useState(PRESET_DESTINATIONS[0]);
   const [routeCoordinates, setRouteCoordinates] = useState([]);
-  const [truckCoordIndex, setTruckCoordIndex] = useState(0);
+  const [isNavigating, setIsNavigating] = useState(false);
+
   const mapRef = useRef(null);
+  const locationSubscription = useRef(null);
 
+  // Request iPhone GPS Permissions
   useEffect(() => {
-    if (!selectedTruck) return;
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Denied',
+          'Turn on location permissions in iPhone Settings to broadcast dispatch location.'
+        );
+        return;
+      }
 
-    const { origin, destination } = selectedTruck;
-    const url = `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?overview=full&geometries=geojson`;
+      let location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
 
-    // Added User-Agent header so the API returns the full high-resolution street curve
+      const initialPos = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+      setCurrentLocation(initialPos);
+    })();
+
+    return () => {
+      if (locationSubscription.current) {
+        locationSubscription.current.remove();
+      }
+    };
+  }, []);
+
+  // Live Location Watcher (triggers when broadcast or navigation is active)
+  useEffect(() => {
+    if (isBroadcasting || isNavigating) {
+      startLocationTracking();
+    } else {
+      if (locationSubscription.current) {
+        locationSubscription.current.remove();
+      }
+    }
+  }, [isBroadcasting, isNavigating]);
+
+  const startLocationTracking = async () => {
+    if (locationSubscription.current) {
+      locationSubscription.current.remove();
+    }
+
+    locationSubscription.current = await Location.watchPositionAsync(
+      {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 2000,
+        distanceInterval: 5,
+      },
+      (newLoc) => {
+        const coords = {
+          latitude: newLoc.coords.latitude,
+          longitude: newLoc.coords.longitude,
+        };
+        setCurrentLocation(coords);
+
+        if (isNavigating && mapRef.current) {
+          mapRef.current.animateCamera({
+            center: coords,
+            pitch: 45,
+            heading: newLoc.coords.heading || 0,
+            zoom: 17,
+          });
+        }
+      }
+    );
+  };
+
+  // Fetch actual turn-by-turn road route
+  const startNavigation = () => {
+    if (!currentLocation || !destination) {
+      Alert.alert('Location Missing', 'Acquiring GPS fix. Please try again.');
+      return;
+    }
+
+    const url = `https://router.project-osrm.org/route/v1/driving/${currentLocation.longitude},${currentLocation.latitude};${destination.longitude},${destination.latitude}?overview=full&geometries=geojson`;
+
     fetch(url, { headers: { 'User-Agent': 'GCR-TruckTrack/1.0' } })
       .then((res) => res.json())
       .then((data) => {
@@ -57,182 +120,216 @@ export default function App() {
             longitude: lng,
           }));
           setRouteCoordinates(coords);
-          setTruckCoordIndex(0);
+          setIsNavigating(true);
+          setIsBroadcasting(true);
 
           mapRef.current?.fitToCoordinates(coords, {
-            edgePadding: { top: 120, right: 60, bottom: 220, left: 60 },
+            edgePadding: { top: 120, right: 60, bottom: 260, left: 60 },
             animated: true,
           });
         }
       })
       .catch((err) => {
         console.warn('Routing error:', err);
-        setRouteCoordinates([origin, destination]);
+        setRouteCoordinates([currentLocation, destination]);
+        setIsNavigating(true);
       });
-  }, [selectedTruck]);
+  };
 
-  // Sped up to 800ms for smoother truck animation along the route
-  useEffect(() => {
-    if (!routeCoordinates.length) return;
-
-    const interval = setInterval(() => {
-      setTruckCoordIndex((prev) => {
-        if (prev + 1 < routeCoordinates.length) {
-          return prev + 1;
-        }
-        return prev; // Stop when destination is reached
-      });
-    }, 800);
-
-    return () => clearInterval(interval);
-  }, [routeCoordinates]);
-
-  if (!selectedTruck) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.headerTitle}>GCR FOOD</Text>
-            <Text style={styles.headerSubtitle}>Products Trading • Live Logistics</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.callButton}
-            onPress={() => Linking.openURL('tel:8634-7097')}
-          >
-            <Ionicons name="call" size={22} color="#0284c7" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.content}>
-          <Text style={styles.sectionTitle}>Active Fleet Dispatches</Text>
-
-          {DISPATCHES.map((item) => (
-            <View key={item.id} style={styles.card}>
-              <View style={styles.cardHeader}>
-                <View>
-                  <Text style={styles.cardId}>#{item.id}</Text>
-                  <Text style={styles.cardDriver}>
-                    {item.driver} • {item.vehicle}
-                  </Text>
-                </View>
-                <View style={styles.etaBadge}>
-                  <Text style={styles.etaText}>{item.eta}</Text>
-                </View>
-              </View>
-
-              <View style={styles.destRow}>
-                <Ionicons name="location-outline" size={18} color="#0284c7" />
-                <Text style={styles.destText}>{item.destinationName}</Text>
-              </View>
-
-              <TouchableOpacity
-                style={styles.actionBtn}
-                onPress={() => setSelectedTruck(item)}
-              >
-                <Text style={styles.actionBtnText}>View Live Map →</Text>
-              </TouchableOpacity>
-            </View>
-          ))}
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  const currentTruckPos =
-    routeCoordinates.length > 0
-      ? routeCoordinates[truckCoordIndex]
-      : selectedTruck.origin;
+  const stopNavigation = () => {
+    setIsNavigating(false);
+    setRouteCoordinates([]);
+  };
 
   return (
-    <View style={styles.mapContainer}>
-      <MapView
-        ref={mapRef}
-        style={StyleSheet.absoluteFillObject}
-        initialRegion={{
-          latitude: selectedTruck.origin.latitude,
-          longitude: selectedTruck.origin.longitude,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
-      >
-        {routeCoordinates.length > 0 && (
-          <Polyline
-            coordinates={routeCoordinates}
-            strokeColor="#0284c7"
-            strokeWidth={5}
+    <SafeAreaView style={styles.container}>
+      {/* Top App Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.headerTitle}>GCR DRIVER TERMINAL</Text>
+          <Text style={styles.headerSubtitle}>Unit #GCR-1082 • Fuso Canter 4W</Text>
+        </View>
+        <View style={styles.broadcastBox}>
+          <Text style={styles.broadcastLabel}>
+            {isBroadcasting ? 'LIVE GPS ON' : 'OFFLINE'}
+          </Text>
+          <Switch
+            value={isBroadcasting}
+            onValueChange={(val) => setIsBroadcasting(val)}
+            trackColor={{ false: '#94a3b8', true: '#22c55e' }}
+            thumbColor="#ffffff"
           />
+        </View>
+      </View>
+
+      {/* Interactive Map */}
+      <View style={styles.mapWrap}>
+        {currentLocation && (
+          <MapView
+            ref={mapRef}
+            style={StyleSheet.absoluteFillObject}
+            initialRegion={{
+              latitude: currentLocation.latitude,
+              longitude: currentLocation.longitude,
+              latitudeDelta: 0.04,
+              longitudeDelta: 0.04,
+            }}
+            showsUserLocation={false}
+          >
+            {/* Real Road Polyline */}
+            {routeCoordinates.length > 0 && (
+              <Polyline
+                coordinates={routeCoordinates}
+                strokeColor="#0284c7"
+                strokeWidth={5}
+              />
+            )}
+
+            {/* Your Phone's Current GPS Location as Truck */}
+            <Marker coordinate={currentLocation} title="Your Vehicle (GCR-1082)">
+              <View style={styles.truckPin}>
+                <Ionicons name="bus" size={20} color="#ffffff" />
+              </View>
+            </Marker>
+
+            {/* Target Destination Pin */}
+            {destination && (
+              <Marker coordinate={destination} title={destination.name}>
+                <View style={styles.destPin}>
+                  <Ionicons name="location" size={24} color="#dc2626" />
+                </View>
+              </Marker>
+            )}
+          </MapView>
         )}
+      </View>
 
-        <Marker coordinate={currentTruckPos} title={`Truck #${selectedTruck.id}`}>
-          <View style={styles.truckMarker}>
-            <Ionicons name="bus" size={20} color="#ffffff" />
-          </View>
-        </Marker>
+      {/* Driver Destination Controls */}
+      <View style={styles.controlSheet}>
+        <Text style={styles.sheetTitle}>Dispatch Target</Text>
 
-        <Marker
-          coordinate={selectedTruck.destination}
-          title={selectedTruck.destinationName}
-        >
-          <View style={styles.destMarker}>
-            <Ionicons name="location" size={22} color="#0f172a" />
-          </View>
-        </Marker>
-      </MapView>
-
-      <TouchableOpacity
-        style={styles.backBtn}
-        onPress={() => setSelectedTruck(null)}
-      >
-        <Ionicons name="chevron-back" size={24} color="#0f172a" />
-      </TouchableOpacity>
-
-      <View style={styles.bottomCard}>
-        <View style={styles.cardHeader}>
-          <View>
-            <Text style={styles.bottomCardTitle}>
-              Delivery Route: {selectedTruck.id}
-            </Text>
-            <Text style={styles.bottomCardDest}>
-              {selectedTruck.destinationName}
-            </Text>
-          </View>
-          <View style={styles.etaBadge}>
-            <Text style={styles.etaText}>{selectedTruck.eta}</Text>
-          </View>
+        {/* Quick Hub Selectors */}
+        <View style={styles.hubContainer}>
+          {PRESET_DESTINATIONS.map((hub, idx) => (
+            <TouchableOpacity
+              key={idx}
+              style={[
+                styles.hubBtn,
+                destination?.name === hub.name && styles.hubBtnActive,
+              ]}
+              onPress={() => setDestination(hub)}
+            >
+              <Text
+                style={[
+                  styles.hubBtnText,
+                  destination?.name === hub.name && styles.hubBtnTextActive,
+                ]}
+                numberOfLines={1}
+              >
+                {hub.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        <Text style={styles.driverInfo}>
-          Driver: {selectedTruck.driver} • Contact: {selectedTruck.contact}
-        </Text>
+        {/* Action Buttons */}
+        {!isNavigating ? (
+          <TouchableOpacity
+            style={styles.navigateBtn}
+            onPress={startNavigation}
+          >
+            <Ionicons name="navigate" size={18} color="#ffffff" />
+            <Text style={styles.navigateBtnText}>
+              Start Navigation & Share Live GPS
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={styles.stopBtn}
+            onPress={stopNavigation}
+          >
+            <Ionicons name="close-circle" size={18} color="#ffffff" />
+            <Text style={styles.stopBtnText}>End Navigation</Text>
+          </TouchableOpacity>
+        )}
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#38bdf8', paddingHorizontal: 20, paddingVertical: 24, borderBottomLeftRadius: 28, borderBottomRightRadius: 28 },
-  headerTitle: { fontSize: 22, fontWeight: '800', color: '#ffffff' },
-  headerSubtitle: { fontSize: 13, color: '#e0f2fe', marginTop: 2 },
-  callButton: { backgroundColor: '#ffffff', width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
-  content: { flex: 1, paddingHorizontal: 16, paddingTop: 24 },
-  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 16 },
-  card: { backgroundColor: '#ffffff', borderRadius: 18, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10, elevation: 3 },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  cardId: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
-  cardDriver: { fontSize: 13, color: '#64748b', marginTop: 2 },
-  etaBadge: { backgroundColor: '#e0f2fe', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
-  etaText: { color: '#0284c7', fontWeight: '700', fontSize: 12 },
-  destRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 14, gap: 6 },
-  destText: { fontSize: 14, color: '#334155' },
-  actionBtn: { backgroundColor: '#38bdf8', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
-  actionBtnText: { color: '#ffffff', fontWeight: '600', fontSize: 14 },
-  mapContainer: { flex: 1 },
-  backBtn: { position: 'absolute', top: 50, left: 20, backgroundColor: '#ffffff', width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, elevation: 4 },
-  truckMarker: { backgroundColor: '#38bdf8', padding: 8, borderRadius: 20, borderWidth: 2, borderColor: '#ffffff' },
-  destMarker: { padding: 4 },
-  bottomCard: { position: 'absolute', bottom: 30, left: 16, right: 16, backgroundColor: '#ffffff', borderRadius: 20, padding: 18, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5 },
-  bottomCardTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
-  bottomCardDest: { fontSize: 13, color: '#64748b', marginTop: 2 },
-  driverInfo: { marginTop: 12, fontSize: 12, color: '#475569' },
+  container: { flex: 1, backgroundColor: '#0f172a' },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#1e293b',
+  },
+  headerTitle: { fontSize: 18, fontWeight: '800', color: '#f8fafc' },
+  headerSubtitle: { fontSize: 12, color: '#94a3b8', marginTop: 2 },
+  broadcastBox: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  broadcastLabel: { fontSize: 11, fontWeight: '700', color: '#38bdf8' },
+  mapWrap: { flex: 1 },
+  truckPin: {
+    backgroundColor: '#0284c7',
+    padding: 7,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  destPin: { padding: 2 },
+  controlSheet: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  sheetTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#334155',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  hubContainer: { flexDirection: 'column', gap: 8, marginBottom: 14 },
+  hubBtn: {
+    backgroundColor: '#f1f5f9',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  hubBtnActive: {
+    backgroundColor: '#e0f2fe',
+    borderColor: '#0284c7',
+  },
+  hubBtnText: { fontSize: 13, color: '#475569', fontWeight: '500' },
+  hubBtnTextActive: { color: '#0284c7', fontWeight: '700' },
+  navigateBtn: {
+    backgroundColor: '#0284c7',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  navigateBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 15 },
+  stopBtn: {
+    backgroundColor: '#ef4444',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  stopBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 15 },
 });
