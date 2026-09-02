@@ -18,8 +18,9 @@ const DISPATCHES = [
     destinationName: 'Grace Park, Caloocan City',
     contact: '8634-7097',
     eta: '14 MINS',
-    origin: { latitude: 14.6507, longitude: 120.9575 }, // Navotas/Malabon side
-    destination: { latitude: 14.6438, longitude: 120.9858 }, // Grace Park
+    // Moved to actual road: NLEX Balintawak
+    origin: { latitude: 14.6565, longitude: 120.9950 },
+    destination: { latitude: 14.6438, longitude: 120.9858 },
   },
   {
     id: 'GCR-1090',
@@ -28,8 +29,9 @@ const DISPATCHES = [
     destinationName: 'Divisoria Market, Manila',
     contact: '8634-7098',
     eta: '38 MINS',
-    origin: { latitude: 14.635, longitude: 120.96 },
-    destination: { latitude: 14.601, longitude: 120.973 },
+    // Moved to actual road: Manila North Harbor
+    origin: { latitude: 14.6065, longitude: 120.9630 },
+    destination: { latitude: 14.6025, longitude: 120.9715 },
   },
 ];
 
@@ -39,14 +41,14 @@ export default function App() {
   const [truckCoordIndex, setTruckCoordIndex] = useState(0);
   const mapRef = useRef(null);
 
-  // Fetch actual turn-by-turn road route via OSRM
   useEffect(() => {
     if (!selectedTruck) return;
 
     const { origin, destination } = selectedTruck;
     const url = `https://router.project-osrm.org/route/v1/driving/${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}?overview=full&geometries=geojson`;
 
-    fetch(url)
+    // Added User-Agent header so the API returns the full high-resolution street curve
+    fetch(url, { headers: { 'User-Agent': 'GCR-TruckTrack/1.0' } })
       .then((res) => res.json())
       .then((data) => {
         if (data.routes && data.routes[0]) {
@@ -57,20 +59,19 @@ export default function App() {
           setRouteCoordinates(coords);
           setTruckCoordIndex(0);
 
-          // Auto-fit map to the route
           mapRef.current?.fitToCoordinates(coords, {
-            edgePadding: { top: 80, right: 60, bottom: 180, left: 60 },
+            edgePadding: { top: 120, right: 60, bottom: 220, left: 60 },
             animated: true,
           });
         }
       })
       .catch((err) => {
-        console.warn('Routing fetch failed, falling back to direct line:', err);
+        console.warn('Routing error:', err);
         setRouteCoordinates([origin, destination]);
       });
   }, [selectedTruck]);
 
-  // Live truck simulation: moves along route every 2 seconds
+  // Sped up to 800ms for smoother truck animation along the route
   useEffect(() => {
     if (!routeCoordinates.length) return;
 
@@ -79,14 +80,13 @@ export default function App() {
         if (prev + 1 < routeCoordinates.length) {
           return prev + 1;
         }
-        return prev;
+        return prev; // Stop when destination is reached
       });
-    }, 2000);
+    }, 800);
 
     return () => clearInterval(interval);
   }, [routeCoordinates]);
 
-  // Dashboard List View
   if (!selectedTruck) {
     return (
       <SafeAreaView style={styles.container}>
@@ -138,7 +138,6 @@ export default function App() {
     );
   }
 
-  // Live Map View with Street Routing & Moving Truck
   const currentTruckPos =
     routeCoordinates.length > 0
       ? routeCoordinates[truckCoordIndex]
@@ -156,23 +155,20 @@ export default function App() {
           longitudeDelta: 0.05,
         }}
       >
-        {/* Actual Road Street Polyline */}
         {routeCoordinates.length > 0 && (
           <Polyline
             coordinates={routeCoordinates}
             strokeColor="#0284c7"
-            strokeWidth={4}
+            strokeWidth={5}
           />
         )}
 
-        {/* Live Truck Marker */}
         <Marker coordinate={currentTruckPos} title={`Truck #${selectedTruck.id}`}>
           <View style={styles.truckMarker}>
             <Ionicons name="bus" size={20} color="#ffffff" />
           </View>
         </Marker>
 
-        {/* Delivery Destination Marker */}
         <Marker
           coordinate={selectedTruck.destination}
           title={selectedTruck.destinationName}
@@ -183,7 +179,6 @@ export default function App() {
         </Marker>
       </MapView>
 
-      {/* Back Button */}
       <TouchableOpacity
         style={styles.backBtn}
         onPress={() => setSelectedTruck(null)}
@@ -191,7 +186,6 @@ export default function App() {
         <Ionicons name="chevron-back" size={24} color="#0f172a" />
       </TouchableOpacity>
 
-      {/* Bottom Dispatch Card */}
       <View style={styles.bottomCard}>
         <View style={styles.cardHeader}>
           <View>
@@ -216,161 +210,29 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#38bdf8',
-    paddingHorizontal: 20,
-    paddingVertical: 24,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#ffffff',
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: '#e0f2fe',
-    marginTop: 2,
-  },
-  callButton: {
-    backgroundColor: '#ffffff',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 16,
-  },
-  card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowOffset: { width: 0, height: 4 },
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  cardId: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  cardDriver: {
-    fontSize: 13,
-    color: '#64748b',
-    marginTop: 2,
-  },
-  etaBadge: {
-    backgroundColor: '#e0f2fe',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  etaText: {
-    color: '#0284c7',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  destRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 14,
-    gap: 6,
-  },
-  destText: {
-    fontSize: 14,
-    color: '#334155',
-  },
-  actionBtn: {
-    backgroundColor: '#38bdf8',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  actionBtnText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  mapContainer: {
-    flex: 1,
-  },
-  backBtn: {
-    position: 'absolute',
-    top: 50,
-    left: 20,
-    backgroundColor: '#ffffff',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  truckMarker: {
-    backgroundColor: '#38bdf8',
-    padding: 8,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: '#ffffff',
-  },
-  destMarker: {
-    padding: 4,
-  },
-  bottomCard: {
-    position: 'absolute',
-    bottom: 30,
-    left: 16,
-    right: 16,
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 18,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    elevation: 5,
-  },
-  bottomCardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  bottomCardDest: {
-    fontSize: 13,
-    color: '#64748b',
-    marginTop: 2,
-  },
-  driverInfo: {
-    marginTop: 12,
-    fontSize: 12,
-    color: '#475569',
-  },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#38bdf8', paddingHorizontal: 20, paddingVertical: 24, borderBottomLeftRadius: 28, borderBottomRightRadius: 28 },
+  headerTitle: { fontSize: 22, fontWeight: '800', color: '#ffffff' },
+  headerSubtitle: { fontSize: 13, color: '#e0f2fe', marginTop: 2 },
+  callButton: { backgroundColor: '#ffffff', width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
+  content: { flex: 1, paddingHorizontal: 16, paddingTop: 24 },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 16 },
+  card: { backgroundColor: '#ffffff', borderRadius: 18, padding: 16, marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10, elevation: 3 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  cardId: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+  cardDriver: { fontSize: 13, color: '#64748b', marginTop: 2 },
+  etaBadge: { backgroundColor: '#e0f2fe', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
+  etaText: { color: '#0284c7', fontWeight: '700', fontSize: 12 },
+  destRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 14, gap: 6 },
+  destText: { fontSize: 14, color: '#334155' },
+  actionBtn: { backgroundColor: '#38bdf8', paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  actionBtnText: { color: '#ffffff', fontWeight: '600', fontSize: 14 },
+  mapContainer: { flex: 1 },
+  backBtn: { position: 'absolute', top: 50, left: 20, backgroundColor: '#ffffff', width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, elevation: 4 },
+  truckMarker: { backgroundColor: '#38bdf8', padding: 8, borderRadius: 20, borderWidth: 2, borderColor: '#ffffff' },
+  destMarker: { padding: 4 },
+  bottomCard: { position: 'absolute', bottom: 30, left: 16, right: 16, backgroundColor: '#ffffff', borderRadius: 20, padding: 18, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 10, elevation: 5 },
+  bottomCardTitle: { fontSize: 16, fontWeight: '700', color: '#0f172a' },
+  bottomCardDest: { fontSize: 13, color: '#64748b', marginTop: 2 },
+  driverInfo: { marginTop: 12, fontSize: 12, color: '#475569' },
 });
