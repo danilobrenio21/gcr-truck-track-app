@@ -28,7 +28,7 @@ jobs:
 
       - name: Link and Publish to Expo
         run: |
-          npx eas-cli init --account danilobrenio21 --non-interactive || true
-          npx eas-cli update --branch main --message "Deploying preview" --non-interactive
+          eas init --force --non-interactive
+          eas update --branch main --message "Deploying preview" --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
