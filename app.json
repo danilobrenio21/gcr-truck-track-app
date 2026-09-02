@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "gcr-truck-tracker",
+    "name": "GCR TruckTrack",
     "slug": "gcr-truck-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -23,11 +23,6 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "73d74a96-6e47-494b-a7e7-3be631ef8e5c"
-      }
     }
   }
 }
