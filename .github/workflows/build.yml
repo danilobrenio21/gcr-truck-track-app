@@ -1,4 +1,4 @@
-name: Build GCR Mobile App
+name: Deploy GCR Mobile App to Expo
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,5 +24,7 @@ jobs:
       - name: Install EAS CLI
         run: npm install -g eas-cli
 
-      - name: Verify Configuration
-        run: npx expo config
+      - name: Publish Update to Expo
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: npx eas-cli update --auto --non-interactive
