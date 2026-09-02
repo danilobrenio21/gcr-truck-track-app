@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "GCR TruckTrack",
-    "slug": "gcr-truck-track",
+    "slug": "gcr-trucktrack",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
