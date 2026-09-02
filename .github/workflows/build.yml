@@ -16,7 +16,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Install dependencies
         run: npm install
@@ -29,7 +28,7 @@ jobs:
 
       - name: Link and Publish to Expo
         run: |
-          eas init --account danilobrenio21 --non-interactive || true
-          eas update --branch main --message "Deploying preview" --non-interactive
+          npx eas-cli init --account danilobrenio21 --non-interactive || true
+          npx eas-cli update --branch main --message "Deploying preview" --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
