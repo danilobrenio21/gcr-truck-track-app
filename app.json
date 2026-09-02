@@ -1,8 +1,7 @@
 {
   "expo": {
     "name": "gcr-truck-tracker",
-    "slug": "gcr-trucktrack",
-    "owner": "danilobrenio21",
+    "slug": "gcr-truck-tracker",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -13,29 +12,16 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true,
-      "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "This app needs access to your location to share delivery progress with dispatch."
-      }
+      "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      },
-      "package": "com.danilobrenio.gcrtrucktrack",
-      "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
-      ]
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "2b60ab63-fa21-4e2c-a321-9122475b0d61"
-      }
     }
   }
 }
